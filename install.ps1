@@ -1,49 +1,29 @@
-﻿# Builds the app and registers it as a (developer-mode) package so it appears in the Widgets board.
-# Requires: Settings → System → For developers → Developer Mode = On
-#   powershell -ExecutionPolicy Bypass -File install.ps1            install / update (keeps pinned widgets)
+﻿# Developer install: builds a SIGNED package with a fresh version number and installs it as an update.
+# (Signed builds can't be replaced by a loose developer registration, so the dev loop uses the same
+#  signed .msix as the releases; an update keeps a pinned widget.)
+# Requires: the signing certificate "CN=Cl4rens" with private key in Cert:\CurrentUser\My, and the
+# public certificate trusted on this PC (run the release Install.ps1 once).
+#   powershell -ExecutionPolicy Bypass -File install.ps1            build + install / update
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall remove again
 param([switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
-$target = Join-Path $env:LOCALAPPDATA 'Programs\ClaudeUsageWidget'
 
 if ($Uninstall) {
-    Get-Process ClaudeUsageWidget -ErrorAction SilentlyContinue | Stop-Process -Force
-    $existing = Get-AppxPackage ClaudeUsageWidget
-    if ($existing) { Remove-AppxPackage $existing.PackageFullName }
-    Remove-Item -Recurse -Force $target -ErrorAction SilentlyContinue
-    'Claude Usage entfernt.'
+    & (Join-Path $PSScriptRoot 'tools\release\Uninstall.ps1')
     return
 }
 
-$dev = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -ErrorAction SilentlyContinue).AllowDevelopmentWithoutDevLicense
-if ($dev -ne 1) { throw 'Bitte zuerst den Entwicklermodus einschalten: Einstellungen → System → Für Entwickler.' }
-
-Push-Location $PSScriptRoot
-try {
-    dotnet build -c Release | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw 'Build fehlgeschlagen' }
-} finally { Pop-Location }
-
-# Update = register a NEWER version from a fresh folder. Never remove the package (Windows would
-# drop the pinned widget) and never overwrite the running folder (the Widgets host keeps it locked).
+# version that is always higher than the last one: 1.<day of 2026+>.<minute of day>
 $now = Get-Date
-$ver = "1.$(($now - [datetime]'2026-01-01').Days).$([int][Math]::Floor($now.TimeOfDay.TotalMinutes)).$($now.Second)"
-$dest = Join-Path $target $ver
-$out = Join-Path $PSScriptRoot 'bin\x64\Release\net10.0-windows10.0.22621.0\win-x64'
-New-Item -ItemType Directory -Force $dest | Out-Null
-Copy-Item -Recurse -Force "$out\*" $dest
-$manifest = Join-Path $dest 'AppxManifest.xml'
-$xml = (Get-Content $manifest -Raw) -replace '(<Identity [^>]*Version=")[^"]+', ('${1}' + $ver)
-[IO.File]::WriteAllText($manifest, $xml)
+$ver = "1.$(($now - [datetime]'2026-01-01').Days).$([int][Math]::Floor($now.TimeOfDay.TotalMinutes))"
+& (Join-Path $PSScriptRoot 'tools\make-release.ps1') -Version $ver | Out-Host
 
-Add-AppxPackage -Register $manifest -ForceApplicationShutdown
+$msix = Join-Path $PSScriptRoot "dist\ClaudeUsageWidget-$ver.msix"
+Get-Process ClaudeUsageWidget -ErrorAction SilentlyContinue | Stop-Process -Force
+Add-AppxPackage -Path $msix -ForceApplicationShutdown
 $pkg = Get-AppxPackage ClaudeUsageWidget
 Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
 
-# clean up older version folders (ignore ones still locked)
-Get-ChildItem $target -Directory | Where-Object { $_.FullName -ne $dest } |
-    ForEach-Object { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue }
-Get-ChildItem $target -File | Remove-Item -Force -ErrorAction SilentlyContinue
-
+# keep dist\ small: drop the dev builds again
+Get-ChildItem (Join-Path $PSScriptRoot 'dist') -Filter "ClaudeUsageWidget-$ver*" | Remove-Item -Recurse -Force
 "Installiert: $($pkg.PackageFullName)"
-'Widget hinzufügen (falls noch nicht da): Widgets öffnen (Win+W) → "+" → "Claude Usage".'

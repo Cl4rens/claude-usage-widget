@@ -8,11 +8,11 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap uap3 uap5 com rescap">
 
-  <Identity Name="ClaudeUsageWidget" Publisher="CN=ClaudeUsageWidgetDev" Version="1.0.0.0" />
+  <Identity Name="ClaudeUsageWidget" Publisher="CN=Cl4rens" Version="1.0.0.0" />
 
   <Properties>
     <DisplayName>Claude Usage</DisplayName>
-    <PublisherDisplayName>Local</PublisherDisplayName>
+    <PublisherDisplayName>Cl4rens</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 

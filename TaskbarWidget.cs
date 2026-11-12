@@ -341,10 +341,12 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     Rectangle? _widgetsButton;
     DateTime _lastUiaLookup;
     bool _uiaBusy;
+    int _uiaMisses; // lookups in a row that didn't find the button
 
     void RefreshWidgetsButtonAsync()
     {
-        if (_uiaBusy || DateTime.Now - _lastUiaLookup < TimeSpan.FromSeconds(10)) return;
+        // every 3 s: the weather button changes width with its text ("5°C Cloudy" → "3°C Clear")
+        if (_uiaBusy || DateTime.Now - _lastUiaLookup < TimeSpan.FromSeconds(3)) return;
         _uiaBusy = true;
         _lastUiaLookup = DateTime.Now;
         var tb = _taskbar;
@@ -364,7 +366,15 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         }).ContinueWith(t =>
         {
             _uiaBusy = false;
-            if (t.Result != _widgetsButton) { _widgetsButton = t.Result; if (_visible) EnsureAttached(); }
+            Rectangle? found = t.Result;
+            if (found == null)
+            {
+                // A single failed lookup (taskbar busy, board opening, …) must not make us forget the
+                // button – otherwise we jump onto it. Only treat it as gone after 3 misses in a row.
+                if (++_uiaMisses < 3) return;
+            }
+            else _uiaMisses = 0;
+            if (found != _widgetsButton) { _widgetsButton = found; if (_visible) EnsureAttached(); }
         }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 

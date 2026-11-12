@@ -29,18 +29,27 @@ Shows how much of your **Claude plan limits** you have used – the rolling **5�
 
 - Windows 11
 - [Claude Code](https://code.claude.com) installed and **signed in with a Claude Pro / Max subscription** – the widget reads the login Claude Code stores on your PC
-- **Developer Mode** turned on (Settings → System → For developers). The release is not signed by a store certificate, so Windows only installs it in developer mode.
-- Windows App Runtime 1.8 (x64). It is already present on most up‑to‑date Windows 11 PCs; if the installer complains, get it from [Microsoft](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads).
+- Windows App Runtime 1.8 (x64). It is already present on most up‑to‑date Windows 11 PCs; the installer tells you if it's missing ([download](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)).
+- No Developer Mode needed.
 
 ## Install
 
 1. Download `ClaudeUsageWidget-<version>.zip` from [Releases](../../releases) and extract it.
 2. Right‑click `Install.ps1` → **Run with PowerShell**
    (or `powershell -ExecutionPolicy Bypass -File Install.ps1`).
-3. The usage display appears in the taskbar. To add the widget: press **Win + W** → **+** → **Claude Usage**.
+3. **Once per PC** Windows asks for administrator rights: the installer adds the publisher certificate `Cl4rens.cer` to *Local Computer → Trusted People*, so Windows accepts the signed package.
+4. The usage display appears in the taskbar. To add the widget: press **Win + W** → **+** → **Claude Usage**.
 
 To update, run the new release's `Install.ps1` – a pinned widget stays where it is.
-To remove everything, run `Uninstall.ps1`.
+To remove everything, run `Uninstall.ps1` (add `-RemoveCertificate` to also stop trusting the certificate).
+
+<details>
+<summary>About the certificate</summary>
+
+The package is signed with a **self-signed** certificate (`CN=Cl4rens`, valid until 2036, signatures are timestamped). Windows only installs signed packages whose certificate it trusts, which is why the installer adds `Cl4rens.cer` – the public part only – to *Trusted People* on your PC. Trusting it means Windows will accept any package signed with this certificate; the private key never leaves the maintainer's machine. You can also do it by hand: double-click `Cl4rens.cer` → *Install certificate* → *Local Machine* → *Trusted People*, then double-click the `.msix`.
+
+Upgrading from 1.0 / 1.1: those builds used a test publisher, so Windows sees 1.2 as a new app. The installer removes the old build and keeps your display settings, but the widget has to be added to the Widgets board once more.
+</details>
 
 Autostart is on by default; you can turn it off in Task Manager → *Startup apps*.
 
@@ -102,14 +111,15 @@ Please be aware of the following before you use it:
 
 ## Build from source
 
-Requirements: .NET 10 SDK, Windows 11 with Developer Mode.
+Requirements: .NET 10 SDK, Windows SDK (for `makeappx` / `signtool`), Windows 11 with Developer Mode for the local test install.
 
 ```powershell
 # build, register as a developer package and start (updates in place)
 powershell -ExecutionPolicy Bypass -File install.ps1
 
-# build a release zip into dist\
-powershell -ExecutionPolicy Bypass -File tools\make-release.ps1 -Version 1.0.0
+# build a signed release (.msix + .cer + scripts) into dist\
+# needs the signing certificate with private key in Cert:\CurrentUser\My
+powershell -ExecutionPolicy Bypass -File tools\make-release.ps1 -Version 1.2.0
 
 # re-render the icons from AppLogo.cs / the widget picker preview
 dotnet run --project tools\RenderIcons
