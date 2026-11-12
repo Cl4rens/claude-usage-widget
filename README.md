@@ -9,6 +9,9 @@ Shows how much of your **Claude plan limits** you have used – the rolling **5�
 ## Features
 
 - **Lives in the taskbar** next to the weather button – no window, no tray icon. Click it to open the Widgets board, right‑click for a link to your usage page.
+- **Hover for details**: both limits with the exact reset time and how long until then.
+
+  ![Tooltip](docs/tooltip.png)
 - **Real Widgets‑board widget** (small and medium size) with both limits, reset times and an "Open in browser" button.
 - **Four looks**, switchable under *Widgets board → … → Customize widget*:
 
@@ -17,8 +20,8 @@ Shows how much of your **Claude plan limits** you have used – the rolling **5�
   | ![Rings](docs/taskbar-rings.png) | ![Bars](docs/taskbar-bars.png) |
   | ![Wide rings](docs/taskbar-wide-rings.png) | ![Wide bars](docs/taskbar-wide-bars.png) |
 
-  Options: rings or bars · wide (5h and week side by side) · compact ("W" instead of "Week") · show reset times · show logo.
-- **Follows Windows**: light/dark taskbar, accent‑coloured taskbar, DPI scaling, English or German UI depending on the Windows display language.
+  Options: rings or bars · text colour (automatic / light / dark) · wide (5h and week side by side) · compact ("W" instead of "Week") · show reset times · show logo.
+- **Fits any taskbar colour**: the text colour follows the Windows theme automatically, or pick light / dark yourself if your taskbar uses an accent colour. DPI scaling and English / German UI (depending on the Windows display language) are handled too.
 - **Gentle on the API**: one request every **2 minutes**, shared by the taskbar and the widget. If the server answers *429 Too Many Requests* the wait doubles (4 → 8 minutes) and never exceeds 8 minutes.
 
 ## Requirements
@@ -56,7 +59,7 @@ Autostart is on by default; you can turn it off in Task Manager → *Startup app
 
 ## Unofficial & disclaimer
 
-**This is an unofficial community project. It is not made, endorsed, supported or reviewed by Anthropic.** "Claude" and "Claude Code" are trademarks of Anthropic, PBC; they are used here only to describe what the app works with. The app uses its own logo.
+**This is an unofficial community project. It is not made, endorsed, supported or reviewed by Anthropic.** "Claude" and "Claude Code" are trademarks of Anthropic, PBC; they are used here only to describe what the app works with. The spark logo is this project's own drawing, not Anthropic's logo.
 
 Please be aware of the following before you use it:
 
@@ -86,7 +89,8 @@ powershell -ExecutionPolicy Bypass -File tools\make-assets.ps1
 | `Program.cs` | start‑up, usage fetching (shared cache, 2 min interval, back‑off), settings |
 | `TaskbarWidget.cs` | the display embedded in the taskbar (all four looks, right‑click menu) |
 | `WidgetProvider.cs` | Widgets‑board provider: widget card and *Customize widget* dialog |
-| `AppLogo.cs` | the gauge logo, drawn as vectors |
+| `HoverTip.cs` | the tooltip with reset times |
+| `AppLogo.cs` | the spark logo (own design), drawn as vectors |
 | `Strings.cs`, `Strings/` | English / German texts |
 | `Package.appxmanifest` | app package, widget registration, startup task |
 

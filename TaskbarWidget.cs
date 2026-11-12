@@ -19,6 +19,8 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
 
     readonly System.Windows.Forms.Timer _layoutTimer = new() { Interval = 1000 };
     readonly MenuOwner _menuOwner = new();
+    readonly HoverTip _tip = new();
+    readonly System.Windows.Forms.Timer _tipTimer = new() { Interval = 450 }; // hover delay like native tooltips
     UsageSnapshot? _snap;
     string? _error;
     bool _visible, _hover, _pressed;
@@ -34,6 +36,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         // Also handles explorer restarts and tray width changes.
         _layoutTimer.Tick += (_, _) => { if (_visible) { ReloadSettingsIfChanged(); EnsureAttached(); } };
         _layoutTimer.Start();
+        _tipTimer.Tick += (_, _) => { if (_hover) ShowTip(); else _tipTimer.Stop(); };
         SystemEvents.UserPreferenceChanged += (_, _) => { ApplyMenuTheme(); EnsureAttached(); Render(); };
         ApplyMenuTheme();
     }
@@ -46,6 +49,33 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         _error = error;
         EnsureAttached(); // width depends on the text
         Render();
+        if (_tip.Visible) ShowTip(); // keep an open tooltip up to date
+    }
+
+    // ---------------------------------------------------------------- hover tooltip
+
+    void ShowTip()
+    {
+        _tipTimer.Stop();
+        if (Handle == IntPtr.Zero || !GetWindowRect(Handle, out var wr)) return;
+        var blocks = new List<HoverTip.Block>();
+        if (_snap != null)
+        {
+            HoverTip.Block B(string title, UsageWindow w) => new(title, L.Used(w.Percent),
+                w.ResetsAt is { } r ? $"{L.ResetAt(r)} · {L.In(r - DateTimeOffset.Now)}" : "");
+            blocks.Add(B(L.SessionLong, _snap.FiveHour));
+            blocks.Add(B(L.WeekLong, _snap.SevenDay));
+        }
+        string footer = _snap != null ? $"{L.AsOf} {_snap.FetchedAt:HH:mm}" : "";
+        if (_error != null) footer = (footer.Length > 0 ? footer + " · " : "") + _error;
+        _tip.ShowAbove(new Rectangle(wr.Left, wr.Top, wr.Right - wr.Left, wr.Bottom - wr.Top),
+            blocks.ToArray(), footer.Length > 0 ? footer : null, dark: !Theme.IsLight());
+    }
+
+    void HideTip()
+    {
+        _tipTimer.Stop();
+        if (_tip.Visible) _tip.Hide();
     }
 
     public static string FormatReset(DateTimeOffset r)
@@ -59,6 +89,8 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     TaskbarSettings _cfg = TaskbarSettings.Load();
     DateTime _cfgStamp = TaskbarSettings.LastWrite;
     bool Bars => _cfg.Style == "bars";
+    /// <summary>Text colour: user choice, or follow the Windows taskbar theme ("auto").</summary>
+    bool DarkText => _cfg.TextColor switch { "dark" => true, "light" => false, _ => Theme.IsLight() };
     /// <summary>Width of the graphic left of the text incl. gap (0 for bars without logo).</summary>
     float IconColumn => Bars ? (_cfg.ShowLogo ? IconSize + RingGap : 0) : RingSize + RingGap;
 
@@ -352,7 +384,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     void Paint(Graphics g, Size size)
     {
         float s = _scale;
-        bool light = Theme.IsLight();
+        bool light = DarkText; // "light" = light taskbar → dark text
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
@@ -490,15 +522,18 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
                     var tme = new TRACKMOUSEEVENT { cbSize = Marshal.SizeOf<TRACKMOUSEEVENT>(), dwFlags = TME_LEAVE, hwndTrack = Handle };
                     TrackMouseEvent(ref tme);
                     Render();
+                    _tipTimer.Start();
                 }
                 break;
 
             case WM_MOUSELEAVE:
                 _hover = false;
+                HideTip();
                 Render();
                 break;
 
             case WM_LBUTTONDOWN:
+                HideTip();
                 _pressed = true;
                 SetCapture(Handle);
                 Render();
@@ -514,6 +549,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
                 break;
 
             case WM_RBUTTONUP:
+                HideTip();
                 ShowMenu();
                 break;
 
@@ -582,6 +618,8 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     public void Dispose()
     {
         _layoutTimer.Dispose();
+        _tipTimer.Dispose();
+        _tip.Dispose();
         if (Handle != IntPtr.Zero) DestroyHandle();
         _menuOwner.DestroyHandle();
     }

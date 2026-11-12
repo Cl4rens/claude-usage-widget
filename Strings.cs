@@ -30,9 +30,39 @@ static class L
     public static string ShowResets => T("Reset-Zeiten anzeigen", "Show reset times");
     public static string Compact => T("Kompakt", "Compact");
     public static string ShowLogo => T("Logo anzeigen", "Show logo");
-    public static string Wide => T("Breit (nebeneinander)", "Wide (side by side)");
+    public static string Wide => T("Breit", "Wide");
+    public static string Resets => T("Reset-Zeiten", "Reset times");
+    public static string Logo => T("Logo", "Logo");
+    public static string Style => T("Darstellung", "Style");
+    public static string TextColor => T("Textfarbe", "Text colour");
+    public static string TextAuto => T("Automatisch", "Automatic");
+    public static string TextLight => T("Hell", "Light");
+    public static string TextDark => T("Dunkel", "Dark");
     public static string Save => T("Speichern", "Save");
     public static string Cancel => T("Abbrechen", "Cancel");
+
+    // hover tooltip
+    public static string ResetAt(DateTimeOffset when)
+    {
+        var l = when.ToLocalTime().AddSeconds(30); // API sends e.g. 04:59:59 → 05:00
+        var today = DateTime.Today;
+        string day = l.Date == today ? T("heute", "today")
+                   : l.Date == today.AddDays(1) ? T("morgen", "tomorrow")
+                   : l.ToString(De ? "ddd, d. MMM" : "ddd, MMM d");
+        return T($"Reset {day} um {l:HH:mm}", $"Resets {day} at {l:HH:mm}");
+    }
+
+    public static string In(TimeSpan t)
+    {
+        t += TimeSpan.FromSeconds(30); // same rounding as the reset time
+        if (t < TimeSpan.Zero) t = TimeSpan.Zero;
+        if (t.TotalHours < 1) return T($"in {Math.Max(1, (int)Math.Ceiling(t.TotalMinutes))} Min.", $"in {Math.Max(1, (int)Math.Ceiling(t.TotalMinutes))} min");
+        if (t.TotalDays < 1) return T($"in {(int)t.TotalHours} Std. {t.Minutes} Min.", $"in {(int)t.TotalHours} h {t.Minutes} min");
+        int d = (int)t.TotalDays;
+        return T($"in {d} {(d == 1 ? "Tag" : "Tagen")} {t.Hours} Std.", $"in {d} {(d == 1 ? "day" : "days")} {t.Hours} h");
+    }
+
+    public static string Used(double? pct) => pct is null ? "–" : T($"{pct:0} % verbraucht", $"{pct:0}% used");
 
     // errors
     public static string Timeout => T("Zeitüberschreitung", "Timed out");

@@ -85,6 +85,7 @@ public sealed partial class WidgetProvider : IWidgetProvider, IWidgetProvider2
                     Compact = Flag("compact", cur.Compact),
                     ShowLogo = Flag("logo", cur.ShowLogo),
                     Wide = Flag("wide", cur.Wide),
+                    TextColor = inputs.TryGetValue("text", out var tc) && tc.Length > 0 ? tc : cur.TextColor,
                 }).Save(); // the taskbar display picks this up within a second
             }
             catch { }
@@ -215,23 +216,13 @@ public sealed partial class WidgetProvider : IWidgetProvider, IWidgetProvider2
             ["version"] = "1.5",
             ["body"] = new object[]
             {
-                new
-                {
-                    type = "Input.ChoiceSet", id = "style" + n, style = "compact", value = cur.Style, label = L.TaskbarDisplay,
-                    choices = new object[]
-                    {
-                        new { title = L.Rings, value = "rings" },
-                        new { title = L.Bars, value = "bars" },
-                    },
-                },
-                new { type = "Input.Toggle", id = "resets" + n, title = L.ShowResets,
-                      value = cur.ShowResets ? "true" : "false", valueOn = "true", valueOff = "false", spacing = "small" },
-                new { type = "Input.Toggle", id = "compact" + n, title = L.Compact,
-                      value = cur.Compact ? "true" : "false", valueOn = "true", valueOff = "false" },
-                new { type = "Input.Toggle", id = "wide" + n, title = L.Wide,
-                      value = cur.Wide ? "true" : "false", valueOn = "true", valueOff = "false" },
-                new { type = "Input.Toggle", id = "logo" + n, title = L.ShowLogo,
-                      value = cur.ShowLogo ? "true" : "false", valueOn = "true", valueOff = "false" },
+                new { type = "TextBlock", text = L.TaskbarDisplay, weight = "bolder", wrap = true },
+                // two controls per row so everything fits into the medium widget
+                Pair(
+                    Choice("style" + n, L.Style, cur.Style, (L.Rings, "rings"), (L.Bars, "bars")),
+                    Choice("text" + n, L.TextColor, cur.TextColor, (L.TextAuto, "auto"), (L.TextLight, "light"), (L.TextDark, "dark"))),
+                Pair(Toggle("resets" + n, L.Resets, cur.ShowResets), Toggle("logo" + n, L.Logo, cur.ShowLogo)),
+                Pair(Toggle("compact" + n, L.Compact, cur.Compact), Toggle("wide" + n, L.Wide, cur.Wide)),
             },
             ["actions"] = new object[]
             {
@@ -241,6 +232,26 @@ public sealed partial class WidgetProvider : IWidgetProvider, IWidgetProvider2
         };
         return JsonSerializer.Serialize(card);
     }
+
+    static object Toggle(string id, string title, bool on) =>
+        new { type = "Input.Toggle", id, title, value = on ? "true" : "false", valueOn = "true", valueOff = "false" };
+
+    static object Choice(string id, string label, string value, params (string Title, string Value)[] choices) => new
+    {
+        type = "Input.ChoiceSet", id, label, value, style = "compact",
+        choices = choices.Select(c => new { title = c.Title, value = c.Value }).ToArray(),
+    };
+
+    static object Pair(object left, object right) => new
+    {
+        type = "ColumnSet",
+        spacing = "small",
+        columns = new object[]
+        {
+            new { type = "Column", width = "stretch", items = new[] { left } },
+            new { type = "Column", width = "stretch", items = new[] { right } },
+        },
+    };
 
     static string BuildCard(string size, UsageSnapshot? snap, string? error)
     {

@@ -178,6 +178,7 @@ record TaskbarSettings
     public bool Compact { get; init; } = false; // "W" instead of "Woche"/"Week"
     public bool ShowLogo { get; init; } = true;
     public bool Wide { get; init; } = false;      // 5h and week side by side
+    public string TextColor { get; init; } = "auto"; // "auto" (follow Windows) | "light" | "dark"
 
     static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget", "settings.json");
