@@ -332,9 +332,37 @@ class TaskbarApp : ApplicationContext
         }
         menu.Add(new(L.AddAccount, AddAccount));
         menu.Add(new(null)); // separator
+
+        // same options as "Customize widget" in the Widgets board – for people who don't use the board
+        TaskbarWidget.MenuEntry Pick(string text, bool on, Func<TaskbarSettings, TaskbarSettings> change) =>
+            new(text, () => ChangeSettings(change), Checked: on);
+        menu.Add(new(L.TaskbarDisplay, Children:
+        [
+            Pick(L.Rings, cfg.Style != "bars", c => c with { Style = "rings" }),
+            Pick(L.Bars, cfg.Style == "bars", c => c with { Style = "bars" }),
+            new(null),
+            new(L.TextColor, Children:
+            [
+                Pick(L.TextAuto, cfg.TextColor is not ("light" or "dark"), c => c with { TextColor = "auto" }),
+                Pick(L.TextLight, cfg.TextColor == "light", c => c with { TextColor = "light" }),
+                Pick(L.TextDark, cfg.TextColor == "dark", c => c with { TextColor = "dark" }),
+            ]),
+            new(null),
+            Pick(L.ShowResets, cfg.ShowResets, c => c with { ShowResets = !c.ShowResets }),
+            Pick(L.ShowLogo, cfg.ShowLogo, c => c with { ShowLogo = !c.ShowLogo }),
+            Pick(L.Compact, cfg.Compact, c => c with { Compact = !c.Compact }),
+            Pick(L.Wide, cfg.Wide, c => c with { Wide = !c.Wide }),
+        ]));
+        menu.Add(new(null));
         menu.Add(new(L.OpenInBrowserMenu, () =>
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://claude.ai/settings/usage") { UseShellExecute = true })));
         return menu;
+    }
+
+    void ChangeSettings(Func<TaskbarSettings, TaskbarSettings> change)
+    {
+        change(TaskbarSettings.Load()).Save();
+        _taskbar.ApplySettingsNow();
     }
 
     async void ToggleAccount(string dir)

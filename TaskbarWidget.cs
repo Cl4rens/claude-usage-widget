@@ -24,7 +24,8 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     /// <summary>What is shown for one account.</summary>
     public record AccountView(string Label, UsageSnapshot? Snap, string? Error);
     /// <summary>One right-click menu entry (Text == null → separator).</summary>
-    public record MenuEntry(string? Text, Action? Run = null, bool Checked = false, bool Disabled = false);
+    public record MenuEntry(string? Text, Action? Run = null, bool Checked = false, bool Disabled = false,
+                            List<MenuEntry>? Children = null);
 
     List<AccountView> _accounts = [];
     // the account currently being measured / painted (see SelectBlock)
@@ -135,6 +136,9 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     const float AccountGap = 18; // space between two accounts (a thin divider sits in the middle)
 
     /// <summary>Settings are changed from the Widgets board ("Widget anpassen") – maybe in another process.</summary>
+    /// <summary>Apply a settings change made in this process right away (not on the next 1 s tick).</summary>
+    public void ApplySettingsNow() => ReloadSettingsIfChanged();
+
     void ReloadSettingsIfChanged()
     {
         var stamp = TaskbarSettings.LastWrite;
@@ -668,25 +672,37 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     {
         var items = BuildMenu?.Invoke();
         if (items is not { Count: > 0 }) return;
-        IntPtr menu = CreatePopupMenu();
+        var actions = new List<Action?>(); // command id = index + 1
+        IntPtr menu = Fill(CreatePopupMenu(), items);
         try
         {
-            for (int i = 0; i < items.Count; i++)
-            {
-                var it = items[i];
-                if (it.Text == null) { AppendMenu(menu, MF_SEPARATOR, UIntPtr.Zero, null); continue; }
-                uint flags = MF_STRING | (it.Checked ? MF_CHECKED : 0) | (it.Disabled ? MF_GRAYED : 0);
-                AppendMenu(menu, flags, (UIntPtr)(i + 1), it.Text);
-            }
 
             var owner = _menuOwner.EnsureHandle();
             SetForegroundWindow(owner);
             var pt = Cursor.Position;
             int cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_RIGHTALIGN, pt.X, pt.Y, owner, IntPtr.Zero);
             PostMessage(owner, WM_NULL, IntPtr.Zero, IntPtr.Zero);
-            if (cmd > 0 && cmd <= items.Count) items[cmd - 1].Run?.Invoke();
+            if (cmd > 0 && cmd <= actions.Count) actions[cmd - 1]?.Invoke();
         }
-        finally { DestroyMenu(menu); }
+        finally { DestroyMenu(menu); } // also destroys the submenus
+
+        // builds (sub)menus recursively; submenus are attached with MF_POPUP
+        IntPtr Fill(IntPtr m, List<MenuEntry> entries)
+        {
+            foreach (var it in entries)
+            {
+                if (it.Text == null) { AppendMenu(m, MF_SEPARATOR, UIntPtr.Zero, null); continue; }
+                uint flags = MF_STRING | (it.Checked ? MF_CHECKED : 0) | (it.Disabled ? MF_GRAYED : 0);
+                if (it.Children is { Count: > 0 } kids)
+                {
+                    AppendMenu(m, flags | MF_POPUP, (UIntPtr)(ulong)Fill(CreatePopupMenu(), kids), it.Text);
+                    continue;
+                }
+                actions.Add(it.Run);
+                AppendMenu(m, flags, (UIntPtr)actions.Count, it.Text);
+            }
+            return m;
+        }
     }
 
     /// <summary>Make native menus dark/light like the taskbar (undocumented uxtheme ordinals, Win10 1903+).</summary>
@@ -738,7 +754,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
               WM_MOUSELEAVE = 0x2A3, WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
     const uint TME_LEAVE = 2, ULW_ALPHA = 2;
     const uint SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
-    const uint MF_STRING = 0, MF_GRAYED = 0x1, MF_CHECKED = 0x8, MF_SEPARATOR = 0x800, TPM_RETURNCMD = 0x100, TPM_RIGHTBUTTON = 0x2, TPM_BOTTOMALIGN = 0x20, TPM_RIGHTALIGN = 0x8;
+    const uint MF_STRING = 0, MF_GRAYED = 0x1, MF_CHECKED = 0x8, MF_POPUP = 0x10, MF_SEPARATOR = 0x800, TPM_RETURNCMD = 0x100, TPM_RIGHTBUTTON = 0x2, TPM_BOTTOMALIGN = 0x20, TPM_RIGHTALIGN = 0x8;
     static readonly IntPtr HWND_TOP = IntPtr.Zero;
 
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }

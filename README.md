@@ -13,7 +13,7 @@ Shows how much of your **Claude plan limits** you have used – the rolling **5�
 
   ![Tooltip](docs/tooltip.png)
 - **Real Widgets‑board widget** (small and medium size) with both limits, reset times and an "Open in browser" button.
-- **Four looks**, switchable under *Widgets board → … → Customize widget*:
+- **Four looks**, switchable by **right‑clicking the taskbar display → Taskbar display** (no Widgets board needed) or under *Widgets board → … → Customize widget*:
 
   | Rings | Bars |
   |---|---|
@@ -74,7 +74,7 @@ claude
 
 ## Advanced settings
 
-Everything you can change in *Customize widget* is stored in `settings.json` in the app's local data folder
+Everything you can change in the right‑click menu or in *Customize widget* is stored in `settings.json` in the app's local data folder
 (`%LOCALAPPDATA%\Packages\ClaudeUsageWidget_…\LocalCache\Local\ClaudeUsageWidget\`). Two extra keys exist there only:
 
 | Key | Values | Effect |
