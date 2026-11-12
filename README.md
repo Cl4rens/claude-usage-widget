@@ -78,13 +78,13 @@ Everything you can change in *Customize widget* is stored in `settings.json` in 
 - Every 2 minutes, for each ticked account, the app reads the OAuth access token from that account's Claude Code login file
   (`.credentials.json` in its config folder, e.g. `%USERPROFILE%\.claude\.credentials.json`) and calls
   `GET https://api.anthropic.com/api/oauth/usage` with it – the same endpoint Claude Code's own `/usage` command uses.
-- The app has no login of its own. Tokens are created and renewed only by Claude Code; when one has expired, the widget says so until Claude Code renews it.
+- The app has no login of its own. Tokens are created and renewed only by Claude Code. When a token has less than 5 minutes left (or the server rejects it), the widget runs `claude auth status` in the background – Claude Code then renews its own login (no model request is sent). If Claude Code isn't installed where the widget can find it, or the login can't be renewed, the widget shows "Login expired" until you open Claude Code.
 - The response contains the utilisation (in %) and reset time of the 5‑hour and the weekly window. That's all the app shows.
 - The taskbar display is a small transparent window embedded in the taskbar; the widget is a regular Windows App SDK widget provider.
 
 ## Privacy
 
-- **Read only.** The login files are only read. Account emails are taken from Claude Code's local `.claude.json` and only shown on your screen. The app never refreshes, changes, stores or copies your token.
+- **Read only.** The login files are only read. Account emails are taken from Claude Code's local `.claude.json` and only shown on your screen. The app never refreshes, changes, stores or copies your token itself – renewal is left to Claude Code (see above).
 - **Only Anthropic.** The token is sent to `api.anthropic.com` and nowhere else. There is no telemetry, no analytics, no other server.
 - **Local data.** The last usage numbers (`cache.json`) and your display settings (`settings.json`) are kept in the app's local data folder and removed when you uninstall.
 - If Claude Code's token has expired, the widget says so – open Claude Code once and it renews the login itself.

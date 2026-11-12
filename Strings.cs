@@ -86,5 +86,5 @@ static class L
     public static string Timeout => T("Zeitüberschreitung", "Timed out");
     public static string TooManyRequests(DateTime next) => T("Zu viele Anfragen – nächster Versuch ", "Too many requests – next try ") + next.ToString("HH:mm");
     public static string NoLogin => T("Keine Claude-Code-Anmeldung gefunden (~/.claude/.credentials.json)", "No Claude Code login found (~/.claude/.credentials.json)");
-    public static string TokenExpired => T("Token abgelaufen – einmal Claude Code öffnen, dann klappt's wieder", "Token expired – open Claude Code once to refresh it");
+    public static string TokenExpired => T("Anmeldung abgelaufen – Claude Code einmal öffnen bzw. neu anmelden", "Login expired – open Claude Code once or sign in again");
 }

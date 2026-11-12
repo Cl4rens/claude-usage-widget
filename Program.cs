@@ -132,20 +132,55 @@ static class UsageClient
         public TimeSpan RetryAfter { get; } = retryAfter;
     }
 
-    static async Task<UsageSnapshot> FetchAsync(string dir)
+    /// <summary>Renew when the token has less than this left (Claude Code itself renews in this window).</summary>
+    static readonly TimeSpan RenewMargin = TimeSpan.FromMinutes(5);
+
+    /// <summary>Reads the access token and its expiry from Claude Code's login file (read-only).</summary>
+    static async Task<(string? token, DateTimeOffset? expires)> ReadToken(string dir)
     {
-        // Re-read every time: Claude Code refreshes the token and rewrites this file.
         var credPath = Path.Combine(dir, ".credentials.json");
         if (!File.Exists(credPath)) throw new Exception(L.NoLogin);
         using var cred = JsonDocument.Parse(await File.ReadAllTextAsync(credPath));
-        var token = cred.RootElement.GetProperty("claudeAiOauth").GetProperty("accessToken").GetString();
+        var o = cred.RootElement.GetProperty("claudeAiOauth");
+        var token = o.GetProperty("accessToken").GetString();
+        DateTimeOffset? exp = o.TryGetProperty("expiresAt", out var e) && e.ValueKind == JsonValueKind.Number
+            ? DateTimeOffset.FromUnixTimeMilliseconds(e.GetInt64()) : null;
+        return (token, exp);
+    }
 
+    static async Task<UsageSnapshot> FetchAsync(string dir)
+    {
+        // Re-read every time: Claude Code refreshes the token and rewrites this file.
+        var (token, expires) = await ReadToken(dir);
+
+        // About to expire (or already expired): let Claude Code renew its own login first.
+        if (expires is { } exp && exp - DateTimeOffset.UtcNow < RenewMargin && ClaudeCli.RenewLogin(dir))
+            (token, _) = await ReadToken(dir);
+
+        using var resp = await SendUsageRequest(token);
+        if ((int)resp.StatusCode is 401 or 403)
+        {
+            // rejected although not expired by the clock → one renewal attempt via Claude Code, then retry once
+            if (!ClaudeCli.RenewLogin(dir)) throw new Exception(L.TokenExpired);
+            var (renewed, _) = await ReadToken(dir);
+            if (renewed == token) throw new Exception(L.TokenExpired);
+            using var retry = await SendUsageRequest(renewed);
+            return await ReadUsage(retry);
+        }
+        return await ReadUsage(resp);
+    }
+
+    static async Task<HttpResponseMessage> SendUsageRequest(string? token)
+    {
         using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.anthropic.com/api/oauth/usage");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.Add("anthropic-beta", "oauth-2025-04-20");
         req.Headers.UserAgent.ParseAdd("claude-usage-widget/1.0");
+        return await Http.SendAsync(req);
+    }
 
-        using var resp = await Http.SendAsync(req);
+    static async Task<UsageSnapshot> ReadUsage(HttpResponseMessage resp)
+    {
         if ((int)resp.StatusCode is 401 or 403)
             throw new Exception(L.TokenExpired);
         if ((int)resp.StatusCode == 429)
