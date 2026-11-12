@@ -5,7 +5,16 @@ namespace ClaudeUsageWidget;
 /// <summary>UI texts – German if the Windows display language is German, English otherwise.</summary>
 static class L
 {
-    static readonly bool De = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "de";
+    // "Language" in settings.json can force "de" / "en"; default follows the Windows display language
+    static readonly bool De = TaskbarSettings.Load().Language switch
+    {
+        "de" => true,
+        "en" => false,
+        _ => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "de",
+    };
+
+    /// <summary>Culture for dates/times so they match the UI language (e.g. "Sat" vs "Sa").</summary>
+    public static CultureInfo Culture => De ? CultureInfo.GetCultureInfo("de-DE") : CultureInfo.GetCultureInfo("en-US");
     static string T(string de, string en) => De ? de : en;
 
     // taskbar
@@ -57,7 +66,7 @@ static class L
         var today = DateTime.Today;
         string day = l.Date == today ? T("heute", "today")
                    : l.Date == today.AddDays(1) ? T("morgen", "tomorrow")
-                   : l.ToString(De ? "ddd, d. MMM" : "ddd, MMM d");
+                   : l.ToString(De ? "ddd, d. MMM" : "ddd, MMM d", Culture);
         return T($"Reset {day} um {l:HH:mm}", $"Resets {day} at {l:HH:mm}");
     }
 

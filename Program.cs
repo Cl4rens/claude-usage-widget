@@ -188,6 +188,10 @@ record TaskbarSettings
     public List<string>? Accounts { get; init; }
     /// <summary>Account folders added via "Add account…" (others are found automatically).</summary>
     public List<string>? ExtraDirs { get; init; }
+    /// <summary>UI language: "auto" (Windows display language) | "de" | "en". Not in the dialog (yet).</summary>
+    public string Language { get; init; } = "auto";
+    /// <summary>Show example.com addresses instead of real account emails (for screenshots / streaming).</summary>
+    public bool DemoEmails { get; init; } = false;
 
     static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget", "settings.json");

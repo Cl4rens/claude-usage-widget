@@ -39,11 +39,17 @@ static class Accounts
         try { dirs.AddRange(Directory.GetDirectories(Home, ".claude*")); } catch { }
         if (cfg.ExtraDirs != null) dirs.AddRange(cfg.ExtraDirs);
 
-        return dirs.Select(Normalize)
+        var found = dirs.Select(Normalize)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(HasLogin)
             .Select(d => new Account(d, LabelFor(d)))
             .ToList();
+        if (cfg.DemoEmails) // placeholder addresses for screenshots
+            found = found.Select((a, i) => a with
+            {
+                Label = i switch { 0 => "you@example.com", 1 => "work@example.com", _ => $"account{i + 1}@example.com" },
+            }).ToList();
+        return found;
     }
 
     /// <summary>The logins the user ticked in the right-click menu (default: the default login).</summary>

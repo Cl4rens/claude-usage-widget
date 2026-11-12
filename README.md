@@ -55,11 +55,23 @@ claude
 
 - The widget finds these logins by itself: `.claude`, `CLAUDE_CONFIG_DIR` and every `%USERPROFILE%\.claude*` folder that contains a login.
 - **Right‑click** the taskbar display: all logins are listed by their email – **tick the ones you want to see**. At least one stays ticked.
+
+  ![Right-click menu](docs/menu.png)
 - **Add account…** lets you pick a login folder somewhere else.
 - Each account gets its own block in the taskbar (separated by a thin line), its own section in the tooltip and in the widget. The logo is shown once.
 - Every account is fetched and backs off on its own, so one failing login doesn't hold up the others. A login that fails shows **⚠ Error** in the taskbar; hover for the reason.
 
 > The Claude desktop app keeps its login separately and can't be added – sign in to Claude Code with that account too.
+
+## Advanced settings
+
+Everything you can change in *Customize widget* is stored in `settings.json` in the app's local data folder
+(`%LOCALAPPDATA%\Packages\ClaudeUsageWidget_…\LocalCache\Local\ClaudeUsageWidget\`). Two extra keys exist there only:
+
+| Key | Values | Effect |
+|---|---|---|
+| `Language` | `"auto"` (default), `"en"`, `"de"` | UI language; `auto` follows the Windows display language. Takes effect after restarting the app. |
+| `DemoEmails` | `true` / `false` | Shows `you@example.com`, `work@example.com`, … instead of the real account emails – handy for screenshots or streaming. |
 
 ## How it works
 

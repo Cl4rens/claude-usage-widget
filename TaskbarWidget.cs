@@ -96,7 +96,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     public static string FormatReset(DateTimeOffset r)
     {
         var local = r.ToLocalTime().AddSeconds(30); // API sends e.g. 04:59:59 → show 05:00
-        return (local - DateTimeOffset.Now).TotalHours < 24 ? local.ToString("HH:mm") : local.ToString("ddd HH:mm");
+        return (local - DateTimeOffset.Now).TotalHours < 24 ? local.ToString("HH:mm") : local.ToString("ddd HH:mm", L.Culture);
     }
 
     // ---------------------------------------------------------------- settings / text content
