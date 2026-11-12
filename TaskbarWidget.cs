@@ -335,22 +335,53 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         var tray = FindWindowEx(_taskbar, IntPtr.Zero, "TrayNotifyWnd", null);
         if (tray != IntPtr.Zero && GetWindowRect(tray, out var tr)) left = tr.Left - tbRect.Left;
 
-        var wb = _widgetsButton; // screen coords, refreshed in the background
-        if (wb is { } r && r.Width > 0 && r.Left - tbRect.Left > client.Right / 2)
-            left = Math.Min(left, r.Left - tbRect.Left);
+        // The weather button is placed relative to the CURRENT tray edge (gap + width measured
+        // earlier), so we follow the tray instantly – even while UI Automation can't be queried.
+        if (_weather is { } w)
+            left -= (int)Math.Round((w.Gap + w.Width) * _scale / w.Scale);
         return left;
     }
 
-    // The weather button is XAML (no HWND) → find it via UI Automation, off the UI thread.
-    Rectangle? _widgetsButton;
-    DateTime _lastUiaLookup;
+    // ---- the weather button is XAML (no HWND) → measured via UI Automation, off the UI thread
+
+    /// <summary>Weather button size and distance to the tray, in pixels at <see cref="Scale"/>.</summary>
+    record WeatherSlot(int Gap, int Width, float Scale);
+
+    WeatherSlot? _weather = LoadWeatherSlot();
+    DateTime _lastUiaLookup, _lastUiaSeen = DateTime.Now;
     bool _uiaBusy;
-    int _uiaMisses; // lookups in a row that didn't find the button
+    static readonly TimeSpan UiaInterval = TimeSpan.FromSeconds(3);
+    /// <summary>
+    /// UI Automation can be blocked for a long time (e.g. while a full-screen game with anti-cheat
+    /// runs) – then we keep the last measurement. Only if the taskbar is readable and the weather
+    /// button has been missing this long do we assume weather is switched off.
+    /// </summary>
+    static readonly TimeSpan WeatherGoneAfter = TimeSpan.FromSeconds(60);
+
+    static string SlotFile => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget", "weather-slot.json");
+
+    static WeatherSlot? LoadWeatherSlot()
+    {
+        try { return System.Text.Json.JsonSerializer.Deserialize<WeatherSlot>(File.ReadAllText(SlotFile)); }
+        catch { return null; }
+    }
+
+    static void SaveWeatherSlot(WeatherSlot? slot)
+    {
+        try
+        {
+            if (slot == null) { File.Delete(SlotFile); return; }
+            Directory.CreateDirectory(Path.GetDirectoryName(SlotFile)!);
+            File.WriteAllText(SlotFile, System.Text.Json.JsonSerializer.Serialize(slot));
+        }
+        catch { }
+    }
 
     void RefreshWidgetsButtonAsync()
     {
         // every 3 s: the weather button changes width with its text ("5°C Cloudy" → "3°C Clear")
-        if (_uiaBusy || DateTime.Now - _lastUiaLookup < TimeSpan.FromSeconds(3)) return;
+        if (_uiaBusy || DateTime.Now - _lastUiaLookup < UiaInterval) return;
         _uiaBusy = true;
         _lastUiaLookup = DateTime.Now;
         var tb = _taskbar;
@@ -359,27 +390,49 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
             try
             {
                 var root = System.Windows.Automation.AutomationElement.FromHandle(tb);
-                var el = root.FindFirst(System.Windows.Automation.TreeScope.Descendants,
-                    new System.Windows.Automation.PropertyCondition(
-                        System.Windows.Automation.AutomationElement.AutomationIdProperty, "WidgetsButton"));
-                if (el == null || el.Current.IsOffscreen) return (Rectangle?)null;
-                var b = el.Current.BoundingRectangle;
-                return new Rectangle((int)b.X, (int)b.Y, (int)b.Width, (int)b.Height);
+                System.Windows.Automation.AutomationElement? Find(string id) => root.FindFirst(
+                    System.Windows.Automation.TreeScope.Descendants,
+                    new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.AutomationIdProperty, id));
+
+                var el = Find("WidgetsButton");
+                if (el != null && !el.Current.IsOffscreen)
+                {
+                    var b = el.Current.BoundingRectangle;
+                    return (readable: true, weather: (Rectangle?)new Rectangle((int)b.X, (int)b.Y, (int)b.Width, (int)b.Height));
+                }
+                // no weather button – but can we read the taskbar at all? (the Start button is always there)
+                return (readable: Find("StartButton") != null, weather: (Rectangle?)null);
             }
-            catch { return null; }
+            catch { return (readable: false, weather: (Rectangle?)null); }
         }).ContinueWith(t =>
         {
             _uiaBusy = false;
-            Rectangle? found = t.Result;
-            if (found == null)
-            {
-                // A single failed lookup (taskbar busy, board opening, …) must not make us forget the
-                // button – otherwise we jump onto it. Only treat it as gone after 3 misses in a row.
-                if (++_uiaMisses < 3) return;
-            }
-            else _uiaMisses = 0;
-            if (found != _widgetsButton) { _widgetsButton = found; if (_visible) EnsureAttached(); }
+            OnWeatherMeasured(t.Result.readable, t.Result.weather);
         }, TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    void OnWeatherMeasured(bool readable, Rectangle? found)
+    {
+        WeatherSlot? slot = _weather;
+        if (!readable) return; // taskbar not readable right now → keep what we know, however long it takes
+        if (found is { Width: > 0 } r)
+        {
+            _lastUiaSeen = DateTime.Now;
+            var tray = FindWindowEx(_taskbar, IntPtr.Zero, "TrayNotifyWnd", null);
+            if (tray == IntPtr.Zero || !GetWindowRect(tray, out var tr)) return;
+            int gap = tr.Left - r.Right;
+            // only when it sits right next to the tray (with a centred taskbar it's on the far left)
+            slot = gap >= -2 && gap < 80 * _scale ? new WeatherSlot(Math.Max(0, gap), r.Width, _scale) : null;
+        }
+        else if (DateTime.Now - _lastUiaSeen < WeatherGoneAfter)
+            return; // readable but no weather button – wait a minute before believing it
+
+        else slot = null; // taskbar readable and no weather button for a minute → switched off
+
+        if (slot == _weather) return;
+        _weather = slot;
+        SaveWeatherSlot(slot);
+        if (_visible) EnsureAttached();
     }
 
     void EnsureAttached()
@@ -405,14 +458,23 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         if (Handle == IntPtr.Zero)
         {
             _bounds = newBounds;
-            CreateHandle(new CreateParams
+            try
             {
-                Caption = "ClaudeUsageWidget",
-                Parent = tb,
-                X = x, Y = 0, Width = w, Height = h,
-                Style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-                ExStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            });
+                CreateHandle(new CreateParams
+                {
+                    Caption = "ClaudeUsageWidget",
+                    Parent = tb,
+                    X = x, Y = 0, Width = w, Height = h,
+                    Style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                    ExStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                });
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // The taskbar can refuse foreign child windows for a while (access denied, e.g. while
+                // a full-screen game with anti-cheat runs). The 1 s layout timer simply tries again.
+                return;
+            }
             Render();
         }
         else if (newBounds != _bounds)
