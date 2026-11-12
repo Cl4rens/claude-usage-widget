@@ -21,6 +21,7 @@ Shows how much of your **Claude plan limits** you have used – the rolling **5�
   | ![Wide rings](docs/taskbar-wide-rings.png) | ![Wide bars](docs/taskbar-wide-bars.png) |
 
   Options: rings or bars · text colour (automatic / light / dark) · wide (5h and week side by side) · compact ("W" instead of "Week") · show reset times · show logo.
+- **Several accounts**: right‑click the taskbar display and tick which Claude Code logins to show – see [Multiple accounts](#multiple-accounts).
 - **Fits any taskbar colour**: the text colour follows the Windows theme automatically, or pick light / dark yourself if your taskbar uses an accent colour. DPI scaling and English / German UI (depending on the Windows display language) are handled too.
 - **Gentle on the API**: one request every **2 minutes**, shared by the taskbar and the widget. If the server answers *429 Too Many Requests* the wait doubles (4 → 8 minutes) and never exceeds 8 minutes.
 
@@ -43,6 +44,23 @@ To remove everything, run `Uninstall.ps1`.
 
 Autostart is on by default; you can turn it off in Task Manager → *Startup apps*.
 
+## Multiple accounts
+
+Claude Code keeps one login per config folder: `%USERPROFILE%\.claude` by default, or the folder `CLAUDE_CONFIG_DIR` points to. A second account is usually run like this:
+
+```powershell
+$env:CLAUDE_CONFIG_DIR = "$HOME\.claude-work"
+claude
+```
+
+- The widget finds these logins by itself: `.claude`, `CLAUDE_CONFIG_DIR` and every `%USERPROFILE%\.claude*` folder that contains a login.
+- **Right‑click** the taskbar display: all logins are listed by their email – **tick the ones you want to see**. At least one stays ticked.
+- **Add account…** lets you pick a login folder somewhere else.
+- Each account gets its own block in the taskbar (separated by a thin line), its own section in the tooltip and in the widget. The logo is shown once.
+- Every account is fetched and backs off on its own, so one failing login doesn't hold up the others. A login that fails shows **⚠ Error** in the taskbar; hover for the reason.
+
+> The Claude desktop app keeps its login separately and can't be added – sign in to Claude Code with that account too.
+
 ## How it works
 
 - Every 2 minutes the app reads the access token from Claude Code's login file `%USERPROFILE%\.claude\.credentials.json` and calls
@@ -52,7 +70,7 @@ Autostart is on by default; you can turn it off in Task Manager → *Startup app
 
 ## Privacy
 
-- **Read only.** The login file is only read. The app never refreshes, changes, stores or copies your token.
+- **Read only.** The login files are only read. Account emails are taken from Claude Code's local `.claude.json` and only shown on your screen. The app never refreshes, changes, stores or copies your token.
 - **Only Anthropic.** The token is sent to `api.anthropic.com` and nowhere else. There is no telemetry, no analytics, no other server.
 - **Local data.** The last usage numbers (`cache.json`) and your display settings (`settings.json`) are kept in the app's local data folder and removed when you uninstall.
 - If Claude Code's token has expired, the widget says so – open Claude Code once and it renews the login itself.
@@ -86,7 +104,8 @@ powershell -ExecutionPolicy Bypass -File tools\make-assets.ps1
 
 | File | What it does |
 |---|---|
-| `Program.cs` | start‑up, usage fetching (shared cache, 2 min interval, back‑off), settings |
+| `Program.cs` | start‑up, usage fetching (shared cache, 2 min interval, back‑off), settings, right‑click menu |
+| `Accounts.cs` | finds Claude Code logins and names them |
 | `TaskbarWidget.cs` | the display embedded in the taskbar (all four looks, right‑click menu) |
 | `WidgetProvider.cs` | Widgets‑board provider: widget card and *Customize widget* dialog |
 | `HoverTip.cs` | the tooltip with reset times |

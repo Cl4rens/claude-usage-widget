@@ -12,7 +12,16 @@ static class L
     public static string Week => T("Woche", "Week");
     public static string WeekShort => T("W", "W");
     public static string Loading => T("lädt…", "loading…");
+    public static string ErrorShort => T("⚠ Fehler", "⚠ Error");
     public static string OpenInBrowserMenu => T("Usage im Browser öffnen", "Open usage in browser");
+    public static string AccountsHeader => T("Angezeigte Konten", "Accounts shown");
+    public static string AddAccount => T("Konto hinzufügen…", "Add account…");
+    public static string AddAccountHint => T(
+        "Claude-Code-Ordner des Kontos wählen (dorthin zeigt CLAUDE_CONFIG_DIR, z. B. .claude-work) – oder den Benutzerordner, der .claude enthält.",
+        "Select the account's Claude Code folder (where CLAUDE_CONFIG_DIR points, e.g. .claude-work) – or the user folder that contains .claude.");
+    public static string NoLoginInFolder => T(
+        "In diesem Ordner ist keine Claude-Code-Anmeldung (.credentials.json).",
+        "This folder doesn't contain a Claude Code login (.credentials.json).");
 
     // widget card
     public static string SessionLong => T("Aktuelle Sitzung (5h)", "Current session (5h)");

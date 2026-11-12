@@ -10,7 +10,8 @@ namespace ClaudeUsageWidget;
 /// </summary>
 sealed class HoverTip : Form
 {
-    public record Block(string Title, string Value, string Detail);
+    /// <summary>Title + value on one line, detail below; optional account header above it.</summary>
+    public record Block(string Title, string Value, string Detail, string? Header = null, bool IsError = false);
 
     Block[] _blocks = [];
     string? _footer;
@@ -78,9 +79,14 @@ sealed class HoverTip : Form
         float w = 0, h = Pad * S;
         foreach (var b in _blocks)
         {
-            w = Math.Max(w, g.MeasureString(b.Title, tf).Width + g.MeasureString("  " + b.Value, vf).Width);
+            if (b.Header != null) { w = Math.Max(w, g.MeasureString(b.Header, vf).Width); h += vf.GetHeight(g) + LineGap * S; }
+            if (b.Title.Length > 0)
+            {
+                w = Math.Max(w, g.MeasureString(b.Title, tf).Width + g.MeasureString("  " + b.Value, vf).Width);
+                h += tf.GetHeight(g) + LineGap * S;
+            }
             w = Math.Max(w, g.MeasureString(b.Detail, df).Width);
-            h += tf.GetHeight(g) + LineGap * S + df.GetHeight(g) + BlockGap * S;
+            h += df.GetHeight(g) + BlockGap * S;
         }
         if (_footer != null) { w = Math.Max(w, g.MeasureString(_footer, df).Width); h += df.GetHeight(g); }
         else h -= BlockGap * S;
@@ -102,12 +108,21 @@ sealed class HoverTip : Form
             g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
 
         float x = Pad * S, y = Pad * S;
+        using var accentB = new SolidBrush(AppLogo.Orange);
         foreach (var b in _blocks)
         {
-            g.DrawString(b.Title, tf, fgB, x, y);
-            g.DrawString("  " + b.Value, vf, fgB, x + g.MeasureString(b.Title, tf).Width, y);
-            y += tf.GetHeight(g) + LineGap * S;
-            g.DrawString(b.Detail, df, mutedB, x, y);
+            if (b.Header != null)
+            {
+                g.DrawString(b.Header, vf, accentB, x, y);
+                y += vf.GetHeight(g) + LineGap * S;
+            }
+            if (b.Title.Length > 0)
+            {
+                g.DrawString(b.Title, tf, fgB, x, y);
+                g.DrawString("  " + b.Value, vf, fgB, x + g.MeasureString(b.Title, tf).Width, y);
+                y += tf.GetHeight(g) + LineGap * S;
+            }
+            g.DrawString(b.Detail, df, b.IsError ? Brushes.IndianRed : mutedB, x, y);
             y += df.GetHeight(g) + BlockGap * S;
         }
         if (_footer != null) g.DrawString(_footer, df, mutedB, x, y);

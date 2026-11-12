@@ -44,20 +44,23 @@ record UsageResult(UsageSnapshot? Snapshot, string? Error);
 /// <summary>
 /// Single source of usage data for the taskbar display and the Widgets board.
 /// Fetches /api/oauth/usage (the endpoint Claude Code's own /usage command uses) at a fixed
-/// interval of 2 minutes – across all callers and all processes (shared file cache guarded by a
-/// named semaphore). On HTTP 429 the wait doubles (4, 8 min) and never exceeds 8 minutes.
-/// The Claude Code login file is only READ; tokens are never refreshed, stored or sent elsewhere.
+/// interval of 2 minutes per account – across all callers and all processes (shared file cache
+/// guarded by a named semaphore, one of each per Claude Code login). On HTTP 429 the wait doubles
+/// (4, 8 min) and never exceeds 8 minutes; each account backs off on its own.
+/// The Claude Code login files are only READ; tokens are never refreshed, stored or sent elsewhere.
 /// </summary>
 static class UsageClient
 {
     static readonly TimeSpan Interval = TimeSpan.FromMinutes(2);
     static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(8);
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
-    static readonly Semaphore FetchLock = new(1, 1, @"Local\ClaudeUsageWidget_Fetch");
-    static string CredPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", ".credentials.json");
-    static string CachePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget", "cache.json");
+
+    /// <summary>Stable short id for an account folder (used for cache file and lock names).</summary>
+    static string Key(string dir) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+        System.Text.Encoding.UTF8.GetBytes(dir.ToLowerInvariant())))[..12];
+
+    static string CachePath(string dir) => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget", $"cache-{Key(dir)}.json");
 
     class Cache
     {
@@ -67,12 +70,13 @@ static class UsageClient
         public double BackoffMinutes { get; set; } // current wait after 429s, 0 = normal interval
     }
 
-    public static Task<UsageResult> GetAsync() => Task.Run(() =>
+    public static Task<UsageResult> GetAsync(string dir) => Task.Run(() =>
     {
-        if (!FetchLock.WaitOne(TimeSpan.FromSeconds(30))) return new UsageResult(ReadCache().Snapshot, L.Timeout);
+        using var fetchLock = new Semaphore(1, 1, $@"Local\ClaudeUsageWidget_Fetch_{Key(dir)}");
+        if (!fetchLock.WaitOne(TimeSpan.FromSeconds(30))) return new UsageResult(ReadCache(dir).Snapshot, L.Timeout);
         try
         {
-            var cache = ReadCache();
+            var cache = ReadCache(dir);
             if (DateTime.UtcNow < cache.NextAllowedUtc)
                 return new UsageResult(cache.Snapshot, cache.Error); // too early → serve cached data
 
@@ -81,7 +85,7 @@ static class UsageClient
             var started = DateTime.UtcNow;
             try
             {
-                cache.Snapshot = FetchAsync().GetAwaiter().GetResult();
+                cache.Snapshot = FetchAsync(dir).GetAwaiter().GetResult();
                 cache.Error = null;
                 cache.NextAllowedUtc = started + Interval - TimeSpan.FromSeconds(5);
                 cache.BackoffMinutes = 0;
@@ -101,24 +105,24 @@ static class UsageClient
                 cache.Error = ex.Message;
                 cache.NextAllowedUtc = DateTime.UtcNow + Interval;
             }
-            WriteCache(cache);
+            WriteCache(dir, cache);
             return new UsageResult(cache.Snapshot, cache.Error);
         }
-        finally { FetchLock.Release(); }
+        finally { fetchLock.Release(); }
     });
 
-    static Cache ReadCache()
+    static Cache ReadCache(string dir)
     {
-        try { return JsonSerializer.Deserialize<Cache>(File.ReadAllText(CachePath)) ?? new(); }
+        try { return JsonSerializer.Deserialize<Cache>(File.ReadAllText(CachePath(dir))) ?? new(); }
         catch { return new(); }
     }
 
-    static void WriteCache(Cache c)
+    static void WriteCache(string dir, Cache c)
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(CachePath)!);
-            File.WriteAllText(CachePath, JsonSerializer.Serialize(c));
+            Directory.CreateDirectory(Path.GetDirectoryName(CachePath(dir))!);
+            File.WriteAllText(CachePath(dir), JsonSerializer.Serialize(c));
         }
         catch { }
     }
@@ -128,11 +132,12 @@ static class UsageClient
         public TimeSpan RetryAfter { get; } = retryAfter;
     }
 
-    static async Task<UsageSnapshot> FetchAsync()
+    static async Task<UsageSnapshot> FetchAsync(string dir)
     {
         // Re-read every time: Claude Code refreshes the token and rewrites this file.
-        if (!File.Exists(CredPath)) throw new Exception(L.NoLogin);
-        using var cred = JsonDocument.Parse(await File.ReadAllTextAsync(CredPath));
+        var credPath = Path.Combine(dir, ".credentials.json");
+        if (!File.Exists(credPath)) throw new Exception(L.NoLogin);
+        using var cred = JsonDocument.Parse(await File.ReadAllTextAsync(credPath));
         var token = cred.RootElement.GetProperty("claudeAiOauth").GetProperty("accessToken").GetString();
 
         using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.anthropic.com/api/oauth/usage");
@@ -179,6 +184,10 @@ record TaskbarSettings
     public bool ShowLogo { get; init; } = true;
     public bool Wide { get; init; } = false;      // 5h and week side by side
     public string TextColor { get; init; } = "auto"; // "auto" (follow Windows) | "light" | "dark"
+    /// <summary>Account folders ticked in the right-click menu (null = just the default login).</summary>
+    public List<string>? Accounts { get; init; }
+    /// <summary>Account folders added via "Add account…" (others are found automatically).</summary>
+    public List<string>? ExtraDirs { get; init; }
 
     static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageWidget", "settings.json");
@@ -243,10 +252,8 @@ class TaskbarApp : ApplicationContext
 
     public TaskbarApp()
     {
-        _taskbar = new TaskbarWidget();
-
-        _taskbar.MenuItems.Add((L.OpenInBrowserMenu, () =>
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://claude.ai/settings/usage") { UseShellExecute = true })));
+        _taskbar = new TaskbarWidget { BuildMenu = BuildMenu };
+        _taskbar.SettingsChanged += async () => await RefreshAsync();
         _taskbar.Show();
 
         _pollTimer.Tick += async (_, _) => await RefreshAsync();
@@ -261,11 +268,74 @@ class TaskbarApp : ApplicationContext
         _busy = true;
         try
         {
-            // served from the shared cache unless the last real request is ≥ 2 min old
-            var r = await UsageClient.GetAsync();
-            _taskbar.SetData(r.Snapshot, r.Error);
+            // each account is served from its own cache unless its last real request is ≥ 2 min old
+            var accounts = Accounts.Enabled(TaskbarSettings.Load());
+            var results = await Task.WhenAll(accounts.Select(a => UsageClient.GetAsync(a.Dir)));
+            _taskbar.SetData(accounts.Zip(results, (a, r) => new TaskbarWidget.AccountView(a.Label, r.Snapshot, r.Error)).ToList());
         }
         finally { _busy = false; }
+    }
+
+    // ---------------------------------------------------------------- right-click menu
+
+    List<TaskbarWidget.MenuEntry> BuildMenu()
+    {
+        var cfg = TaskbarSettings.Load();
+        var all = Accounts.Discover(cfg);
+        var enabled = Accounts.Enabled(cfg).Select(a => a.Dir).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool sameLabels = all.GroupBy(a => a.Label).Any(g => g.Count() > 1);
+
+        var menu = new List<TaskbarWidget.MenuEntry> { new(L.AccountsHeader, Disabled: true) };
+        foreach (var acc in all)
+        {
+            string text = acc.Label == acc.Folder || (!sameLabels && acc.Folder == ".claude") ? acc.Label : $"{acc.Label}  ({acc.Folder})";
+            menu.Add(new(text, () => ToggleAccount(acc.Dir), Checked: enabled.Contains(acc.Dir)));
+        }
+        menu.Add(new(L.AddAccount, AddAccount));
+        menu.Add(new(null)); // separator
+        menu.Add(new(L.OpenInBrowserMenu, () =>
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://claude.ai/settings/usage") { UseShellExecute = true })));
+        return menu;
+    }
+
+    async void ToggleAccount(string dir)
+    {
+        var cfg = TaskbarSettings.Load();
+        var on = Accounts.Enabled(cfg).Select(a => a.Dir).ToList();
+        if (on.Contains(dir, StringComparer.OrdinalIgnoreCase))
+        {
+            if (on.Count == 1) return; // keep at least one account
+            on.RemoveAll(d => d.Equals(dir, StringComparison.OrdinalIgnoreCase));
+        }
+        else on.Add(dir);
+        // keep the menu order
+        var order = Accounts.Discover(cfg).Select(a => a.Dir).ToList();
+        on = on.OrderBy(d => order.FindIndex(o => o.Equals(d, StringComparison.OrdinalIgnoreCase))).ToList();
+        (cfg with { Accounts = on }).Save();
+        await RefreshAsync();
+    }
+
+    async void AddAccount()
+    {
+        using var dlg = new FolderBrowserDialog
+        {
+            Description = L.AddAccountHint,
+            UseDescriptionForTitle = true,
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ShowHiddenFiles = true,
+        };
+        if (dlg.ShowDialog() != DialogResult.OK) return;
+        var dir = Accounts.ResolvePicked(dlg.SelectedPath);
+        if (dir == null)
+        {
+            MessageBox.Show(L.NoLoginInFolder, "Claude Usage", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var cfg = TaskbarSettings.Load();
+        var extra = (cfg.ExtraDirs ?? []).Where(d => !d.Equals(dir, StringComparison.OrdinalIgnoreCase)).Append(dir).ToList();
+        var on = Accounts.Enabled(cfg).Select(a => a.Dir).Where(d => !d.Equals(dir, StringComparison.OrdinalIgnoreCase)).Append(dir).ToList();
+        (cfg with { ExtraDirs = extra, Accounts = on }).Save();
+        await RefreshAsync();
     }
 
     internal static GraphicsPath RoundedRect(Rectangle r, int radius)

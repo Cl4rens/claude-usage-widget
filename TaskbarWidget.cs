@@ -21,15 +21,23 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     readonly MenuOwner _menuOwner = new();
     readonly HoverTip _tip = new();
     readonly System.Windows.Forms.Timer _tipTimer = new() { Interval = 450 }; // hover delay like native tooltips
+    /// <summary>What is shown for one account.</summary>
+    public record AccountView(string Label, UsageSnapshot? Snap, string? Error);
+    /// <summary>One right-click menu entry (Text == null → separator).</summary>
+    public record MenuEntry(string? Text, Action? Run = null, bool Checked = false, bool Disabled = false);
+
+    List<AccountView> _accounts = [];
+    // the account currently being measured / painted (see SelectBlock)
     UsageSnapshot? _snap;
     string? _error;
+    int _block;
     bool _visible, _hover, _pressed;
     IntPtr _taskbar;
     Rectangle _bounds; // in taskbar client coordinates
     float _scale = 1;
 
-    /// <summary>Right-click menu entries.</summary>
-    public List<(string Text, Action Run)> MenuItems { get; } = new();
+    /// <summary>Builds the right-click menu each time it opens.</summary>
+    public Func<List<MenuEntry>>? BuildMenu { get; set; }
 
     public TaskbarWidget()
     {
@@ -43,10 +51,9 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
 
     public void Show() { _visible = true; EnsureAttached(); }
 
-    public void SetData(UsageSnapshot? snap, string? error)
+    public void SetData(List<AccountView> accounts)
     {
-        if (snap != null) _snap = snap;
-        _error = error;
+        _accounts = accounts;
         EnsureAttached(); // width depends on the text
         Render();
         if (_tip.Visible) ShowTip(); // keep an open tooltip up to date
@@ -59,15 +66,23 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         _tipTimer.Stop();
         if (Handle == IntPtr.Zero || !GetWindowRect(Handle, out var wr)) return;
         var blocks = new List<HoverTip.Block>();
-        if (_snap != null)
+        bool many = _accounts.Count > 1;
+        DateTime? asOf = null;
+        foreach (var acc in _accounts)
         {
-            HoverTip.Block B(string title, UsageWindow w) => new(title, L.Used(w.Percent),
-                w.ResetsAt is { } r ? $"{L.ResetAt(r)} · {L.In(r - DateTimeOffset.Now)}" : "");
-            blocks.Add(B(L.SessionLong, _snap.FiveHour));
-            blocks.Add(B(L.WeekLong, _snap.SevenDay));
+            string? header = many ? acc.Label : null;
+            if (acc.Snap is { } snap)
+            {
+                HoverTip.Block B(string title, UsageWindow w, string? h) => new(title, L.Used(w.Percent),
+                    w.ResetsAt is { } r ? $"{L.ResetAt(r)} · {L.In(r - DateTimeOffset.Now)}" : "", h);
+                blocks.Add(B(L.SessionLong, snap.FiveHour, header));
+                blocks.Add(B(L.WeekLong, snap.SevenDay, null));
+                asOf = asOf is { } t && t < snap.FetchedAt ? t : snap.FetchedAt;
+            }
+            if (acc.Error != null)
+                blocks.Add(new HoverTip.Block("", "", acc.Error, acc.Snap == null ? header : null, IsError: true));
         }
-        string footer = _snap != null ? $"{L.AsOf} {_snap.FetchedAt:HH:mm}" : "";
-        if (_error != null) footer = (footer.Length > 0 ? footer + " · " : "") + _error;
+        string footer = asOf is { } at ? $"{L.AsOf} {at:HH:mm}" : "";
         _tip.ShowAbove(new Rectangle(wr.Left, wr.Top, wr.Right - wr.Left, wr.Bottom - wr.Top),
             blocks.ToArray(), footer.Length > 0 ? footer : null, dark: !Theme.IsLight());
     }
@@ -92,7 +107,32 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     /// <summary>Text colour: user choice, or follow the Windows taskbar theme ("auto").</summary>
     bool DarkText => _cfg.TextColor switch { "dark" => true, "light" => false, _ => Theme.IsLight() };
     /// <summary>Width of the graphic left of the text incl. gap (0 for bars without logo).</summary>
-    float IconColumn => Bars ? (_cfg.ShowLogo ? IconSize + RingGap : 0) : RingSize + RingGap;
+    float IconColumn => Bars ? (ShowLogoHere ? IconSize + RingGap : 0) : RingSize + RingGap;
+    /// <summary>The logo is drawn once, in the first account's block.</summary>
+    bool ShowLogoHere => _cfg.ShowLogo && _block == 0;
+
+    void SelectBlock(int i)
+    {
+        _block = i;
+        var a = i < _accounts.Count ? _accounts[i] : null;
+        _snap = a?.Snap;
+        _error = a?.Error;
+    }
+
+    int BlockCount => Math.Max(1, _accounts.Count);
+
+    /// <summary>First line of a block without data: the account's name (before the @), kept short.</summary>
+    string BlockTitle()
+    {
+        var label = _block < _accounts.Count ? _accounts[_block].Label : "Claude";
+        var at = label.IndexOf('@');
+        if (at > 0) label = label[..at];
+        return label.Length > 14 ? label[..13] + "…" : label;
+    }
+
+    /// <summary>Second line of a block without data – the full message is in the tooltip.</summary>
+    string BlockStatus() => _error == null ? L.Loading : L.ErrorShort;
+    const float AccountGap = 18; // space between two accounts (a thin divider sits in the middle)
 
     /// <summary>Settings are changed from the Widgets board ("Widget anpassen") – maybe in another process.</summary>
     void ReloadSettingsIfChanged()
@@ -103,7 +143,11 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         _cfg = TaskbarSettings.Load();
         EnsureAttached();
         Render();
+        SettingsChanged?.Invoke(); // e.g. other accounts ticked → fetch them right away
     }
+
+    /// <summary>Raised when settings.json changed (right-click menu, widget dialog, other process).</summary>
+    public event Action? SettingsChanged;
 
     record Row(string Label, string Value, string Reset);
 
@@ -145,7 +189,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         float W(string t, Font f) => t.Length == 0 ? 0 : g.MeasureString(t, f, 1000, Typo).Width;
         var rows = Rows();
         if (rows.Length == 0)
-            return new Cols(0, 0, Math.Max(W("Claude", vf), W(_error ?? L.Loading, lf)), 0);
+            return new Cols(0, 0, Math.Max(W(BlockTitle(), vf), W(BlockStatus(), lf)), 0);
         float label = rows.Max(r => W(r.Label, lf));
         float value = rows.Max(r => W(r.Value, vf));
         float reset = rows.Max(r => W(r.Reset, lf));
@@ -154,21 +198,44 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         return new Cols(0, 0, value, rest);                                              // 11%  5h · 15:10
     }
 
-    int DesiredWidth()
+    /// <summary>Width of the current account's block incl. its left/right padding.</summary>
+    int FrameWidth(Graphics g)
     {
-        using var bmp = new Bitmap(1, 1);
-        using var g = Graphics.FromImage(bmp);
         if (Wide) return WideWidth(g);
         float text = Measure(g).Total(Gap * _scale);
         float w = (PadLeft + IconColumn + PadRight) * _scale + text;
         return (int)Math.Ceiling(Math.Min(w, 320 * _scale));
     }
 
+    /// <summary>x offset of every account block; neighbouring blocks share their paddings.</summary>
+    (float[] offsets, int total) Layout(Graphics g)
+    {
+        var offsets = new float[BlockCount];
+        float x = 0, overlap = (PadLeft + PadRight - AccountGap) * _scale;
+        int total = 0;
+        for (int i = 0; i < BlockCount; i++)
+        {
+            SelectBlock(i);
+            offsets[i] = x;
+            int w = FrameWidth(g);
+            total = (int)Math.Ceiling(x + w);
+            x += w - overlap;
+        }
+        return (offsets, total);
+    }
+
+    int DesiredWidth()
+    {
+        using var bmp = new Bitmap(1, 1);
+        using var g = Graphics.FromImage(bmp);
+        return Layout(g).total;
+    }
+
     // ---------------------------------------------------------------- wide mode (5h and week side by side)
 
     const float WideRing = 26, WideItemGap = 16, WideBarMin = 48;
     bool Wide => _cfg.Wide && _snap != null;
-    float WideLogoColumn => _cfg.ShowLogo ? IconSize + RingGap : 0;
+    float WideLogoColumn => ShowLogoHere ? IconSize + RingGap : 0;
 
     /// <summary>Width of one wide item (5h or week).</summary>
     float WideItemWidth(Graphics g, Row r, Font vf, Font lf)
@@ -207,7 +274,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         float W(string t, Font f) => t.Length == 0 ? 0 : g.MeasureString(t, f, 1000, Typo).Width;
 
         float x = PadLeft * s;
-        if (_cfg.ShowLogo)
+        if (ShowLogoHere)
         {
             AppLogo.Draw(g, new RectangleF(x, cy - IconSize * s / 2, IconSize * s, IconSize * s), logoC);
             x += (IconSize + RingGap) * s;
@@ -389,10 +456,6 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
-        var fgC = light ? Color.FromArgb(28, 28, 28) : Color.White;
-        var mutedC = light ? Color.FromArgb(170, 0, 0, 0) : Color.FromArgb(200, 255, 255, 255);
-        var trackC = light ? Color.FromArgb(40, 0, 0, 0) : Color.FromArgb(55, 255, 255, 255);
-
         // hover / pressed background like native taskbar buttons
         if (_hover || _pressed)
         {
@@ -402,6 +465,32 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
             using var path = TaskbarApp.RoundedRect(new Rectangle(0, pad, size.Width - 1, size.Height - 2 * pad - 1), (int)(5 * s));
             g.FillPath(hb, path);
         }
+
+        var (offsets, _) = Layout(g);
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            if (i > 0) // thin divider between two accounts
+            {
+                float dx = offsets[i] + (PadLeft - AccountGap / 2) * s;
+                using var pen = new Pen(light ? Color.FromArgb(50, 0, 0, 0) : Color.FromArgb(60, 255, 255, 255), Math.Max(1, s));
+                g.DrawLine(pen, dx, size.Height * 0.25f, dx, size.Height * 0.75f);
+            }
+            SelectBlock(i);
+            var state = g.Save();
+            g.TranslateTransform(offsets[i], 0);
+            PaintBlock(g, size);
+            g.Restore(state);
+        }
+    }
+
+    /// <summary>Paints the currently selected account (origin = left edge of its block).</summary>
+    void PaintBlock(Graphics g, Size size)
+    {
+        float s = _scale;
+        bool light = DarkText;
+        var fgC = light ? Color.FromArgb(28, 28, 28) : Color.White;
+        var mutedC = light ? Color.FromArgb(170, 0, 0, 0) : Color.FromArgb(200, 255, 255, 255);
+        var trackC = light ? Color.FromArgb(40, 0, 0, 0) : Color.FromArgb(55, 255, 255, 255);
 
         // colours for the two limits
         Color weekC, sessionC;
@@ -429,7 +518,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         }
         if (Bars)
         {
-            if (_cfg.ShowLogo)
+            if (ShowLogoHere)
                 AppLogo.Draw(g, new RectangleF(cx - IconSize * s / 2, cy - IconSize * s / 2, IconSize * s, IconSize * s), logoC);
         }
         else
@@ -437,7 +526,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
             float thick = 3.2f * s;
             DrawRing(g, cx, cy, (RingSize / 2 - 1.8f) * s, thick, _snap?.SevenDay.Percent, trackC, weekC);
             DrawRing(g, cx, cy, (RingSize / 2 - 6.6f) * s, thick, _snap?.FiveHour.Percent, trackC, sessionC);
-            if (_cfg.ShowLogo) // small logo in the middle of the rings
+            if (ShowLogoHere) // small logo in the middle of the rings
             {
                 float ls = 8.5f * s;
                 AppLogo.Draw(g, new RectangleF(cx - ls / 2, cy - ls / 2, ls, ls), logoC);
@@ -459,8 +548,9 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
         var rows = Rows();
         if (rows.Length == 0)
         {
-            g.DrawString("Claude", vf, fg, x0, TextY(0), Typo);
-            g.DrawString(_error ?? L.Loading, lf, _error != null ? Brushes.IndianRed : muted, x0, TextY(1), Typo);
+            g.DrawString(BlockTitle(), vf, fg, x0, TextY(0), Typo);
+            using var warn = new SolidBrush(light ? Color.FromArgb(180, 40, 30) : Color.FromArgb(255, 200, 190));
+            g.DrawString(BlockStatus(), lf, _error != null ? warn : muted, x0, TextY(1), Typo);
             return;
         }
 
@@ -566,19 +656,25 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     /// </summary>
     void ShowMenu()
     {
-        if (MenuItems.Count == 0) return;
+        var items = BuildMenu?.Invoke();
+        if (items is not { Count: > 0 }) return;
         IntPtr menu = CreatePopupMenu();
         try
         {
-            for (int i = 0; i < MenuItems.Count; i++)
-                AppendMenu(menu, MF_STRING, (UIntPtr)(i + 1), MenuItems[i].Text);
+            for (int i = 0; i < items.Count; i++)
+            {
+                var it = items[i];
+                if (it.Text == null) { AppendMenu(menu, MF_SEPARATOR, UIntPtr.Zero, null); continue; }
+                uint flags = MF_STRING | (it.Checked ? MF_CHECKED : 0) | (it.Disabled ? MF_GRAYED : 0);
+                AppendMenu(menu, flags, (UIntPtr)(i + 1), it.Text);
+            }
 
             var owner = _menuOwner.EnsureHandle();
             SetForegroundWindow(owner);
             var pt = Cursor.Position;
             int cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_RIGHTALIGN, pt.X, pt.Y, owner, IntPtr.Zero);
             PostMessage(owner, WM_NULL, IntPtr.Zero, IntPtr.Zero);
-            if (cmd > 0 && cmd <= MenuItems.Count) MenuItems[cmd - 1].Run();
+            if (cmd > 0 && cmd <= items.Count) items[cmd - 1].Run?.Invoke();
         }
         finally { DestroyMenu(menu); }
     }
@@ -632,7 +728,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
               WM_MOUSELEAVE = 0x2A3, WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
     const uint TME_LEAVE = 2, ULW_ALPHA = 2;
     const uint SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
-    const uint MF_STRING = 0, TPM_RETURNCMD = 0x100, TPM_RIGHTBUTTON = 0x2, TPM_BOTTOMALIGN = 0x20, TPM_RIGHTALIGN = 0x8;
+    const uint MF_STRING = 0, MF_GRAYED = 0x1, MF_CHECKED = 0x8, MF_SEPARATOR = 0x800, TPM_RETURNCMD = 0x100, TPM_RIGHTBUTTON = 0x2, TPM_BOTTOMALIGN = 0x20, TPM_RIGHTALIGN = 0x8;
     static readonly IntPtr HWND_TOP = IntPtr.Zero;
 
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
@@ -662,7 +758,7 @@ sealed class TaskbarWidget : NativeWindow, IDisposable
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
     [DllImport("user32.dll")] static extern IntPtr CreatePopupMenu();
     [DllImport("user32.dll")] static extern bool DestroyMenu(IntPtr m);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool AppendMenu(IntPtr m, uint flags, UIntPtr id, string text);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool AppendMenu(IntPtr m, uint flags, UIntPtr id, string? text);
     [DllImport("user32.dll")] static extern int TrackPopupMenuEx(IntPtr m, uint flags, int x, int y, IntPtr owner, IntPtr tpm);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
     [DllImport("uxtheme.dll", EntryPoint = "#135")] static extern int SetPreferredAppMode(int mode);

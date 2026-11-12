@@ -31,8 +31,8 @@ public sealed partial class WidgetProvider : IWidgetProvider, IWidgetProvider2
         return false;
     }
     static System.Threading.Timer? _timer;
-    static UsageSnapshot? _last;
-    static string? _lastError;
+    /// <summary>Latest data of every account ticked in the taskbar's right-click menu.</summary>
+    static List<(string Label, UsageSnapshot? Snap, string? Error)> _data = [];
 
     public WidgetProvider()
     {
@@ -133,14 +133,14 @@ public sealed partial class WidgetProvider : IWidgetProvider, IWidgetProvider2
     {
         bool anyActive;
         lock (Lock) anyActive = Widgets.Values.Any(w => w.active);
-        if (!anyActive && _last != null) return; // board closed → don't poll
+        if (!anyActive && _data.Count > 0) return; // board closed → don't poll
         if (Interlocked.Exchange(ref _refreshing, 1) == 1) return;
         try
         {
-            // shared cache: at most one real request every 2 minutes for the whole app
-            var r = await UsageClient.GetAsync();
-            _last = r.Snapshot ?? _last;
-            _lastError = r.Error;
+            // shared cache: at most one real request every 2 minutes per account for the whole app
+            var accounts = Accounts.Enabled(TaskbarSettings.Load());
+            var results = await Task.WhenAll(accounts.Select(a => UsageClient.GetAsync(a.Dir)));
+            _data = accounts.Zip(results, (a, r) => (a.Label, r.Snapshot, r.Error)).ToList();
         }
         finally { Interlocked.Exchange(ref _refreshing, 0); }
 
@@ -157,7 +157,7 @@ public sealed partial class WidgetProvider : IWidgetProvider, IWidgetProvider2
         {
             WidgetManager.GetDefault().UpdateWidget(new WidgetUpdateRequestOptions(id)
             {
-                Template = customizing ? BuildSettingsCard(TaskbarSettings.Load()) : BuildCard(size, _last, _lastError),
+                Template = customizing ? BuildSettingsCard(TaskbarSettings.Load()) : BuildCard(size, _data),
                 Data = "{}",
                 CustomState = "",
             });
@@ -252,6 +252,53 @@ public sealed partial class WidgetProvider : IWidgetProvider, IWidgetProvider2
             new { type = "Column", width = "stretch", items = new[] { right } },
         },
     };
+
+    static string BuildCard(string size, List<(string Label, UsageSnapshot? Snap, string? Error)> data)
+    {
+        if (data.Count <= 1)
+            return BuildCard(size, data.FirstOrDefault().Snap, data.FirstOrDefault().Error);
+
+        // several accounts: name, then 5h and week side by side per account
+        bool compact = size == "small";
+        var body = new List<object>();
+        foreach (var (label, snap, error) in data)
+        {
+            body.Add(new { type = "TextBlock", text = label, size = "small", weight = "bolder", spacing = body.Count == 0 ? "none" : "medium", wrap = false });
+            if (snap == null)
+            {
+                body.Add(new { type = "TextBlock", text = error ?? L.Loading, size = "small", wrap = true, color = error != null ? "attention" : "default", spacing = "none" });
+                continue;
+            }
+            object Cell(string title, UsageWindow w) => new
+            {
+                type = "Column", width = "stretch",
+                items = new object[]
+                {
+                    new { type = "TextBlock", text = $"{title}  {(w.Percent is null ? "–" : $"{w.Percent:0}%")}", weight = "bolder", size = compact ? "small" : "medium", spacing = "none" },
+                    Bar(w.Percent),
+                },
+            };
+            body.Add(new
+            {
+                type = "ColumnSet", spacing = "none",
+                columns = new[] { Cell("5h", snap.FiveHour), Cell(compact ? L.WeekShort : L.Week, snap.SevenDay) },
+            });
+        }
+        var newest = data.Where(d => d.Snap != null).Select(d => d.Snap!.FetchedAt).DefaultIfEmpty().Min();
+        if (!compact && newest != default)
+            body.Add(new { type = "TextBlock", text = $"{L.AsOf} {newest:HH:mm}", size = "small", isSubtle = true, horizontalAlignment = "right", spacing = "small" });
+
+        var card = new Dictionary<string, object>
+        {
+            ["type"] = "AdaptiveCard",
+            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
+            ["version"] = "1.5",
+            ["body"] = body,
+        };
+        if (!compact)
+            card["actions"] = new object[] { new { type = "Action.OpenUrl", title = L.OpenInBrowser, url = "https://claude.ai/settings/usage" } };
+        return JsonSerializer.Serialize(card);
+    }
 
     static string BuildCard(string size, UsageSnapshot? snap, string? error)
     {
