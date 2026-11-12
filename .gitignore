@@ -1,0 +1,11 @@
+# build output – contains local paths (user name, NuGet cache) and PDBs
+bin/
+obj/
+publish/
+tools/RenderIcons/bin/
+tools/RenderIcons/obj/
+
+# IDE
+.vs/
+*.user
+dist/
