@@ -75,8 +75,10 @@ Everything you can change in *Customize widget* is stored in `settings.json` in 
 
 ## How it works
 
-- Every 2 minutes the app reads the access token from Claude Code's login file `%USERPROFILE%\.claude\.credentials.json` and calls
-  `GET https://api.anthropic.com/api/oauth/usage` – the same endpoint Claude Code's own `/usage` command uses.
+- Every 2 minutes, for each ticked account, the app reads the OAuth access token from that account's Claude Code login file
+  (`.credentials.json` in its config folder, e.g. `%USERPROFILE%\.claude\.credentials.json`) and calls
+  `GET https://api.anthropic.com/api/oauth/usage` with it – the same endpoint Claude Code's own `/usage` command uses.
+- The app has no login of its own. Tokens are created and renewed only by Claude Code; when one has expired, the widget says so until Claude Code renews it.
 - The response contains the utilisation (in %) and reset time of the 5‑hour and the weekly window. That's all the app shows.
 - The taskbar display is a small transparent window embedded in the taskbar; the widget is a regular Windows App SDK widget provider.
 
@@ -94,7 +96,7 @@ Everything you can change in *Customize widget* is stored in `settings.json` in 
 Please be aware of the following before you use it:
 
 - **Undocumented endpoint.** `/api/oauth/usage` is not a public, documented API. Anthropic can change or remove it at any time, and the widget may stop working without warning.
-- **Use of your Claude Code login.** The widget uses the login of your own Claude Code installation outside of Claude Code. Anthropic's [terms for Claude Code](https://code.claude.com/docs/en/legal-and-compliance.md) say that subscription (OAuth) logins are meant for Claude Code and Anthropic's own apps. Whether a small, read‑only, local status display like this one is acceptable is **your call** – read the terms yourself. This project makes no claim that it is permitted and accepts no liability for any consequences for your account.
+- **Use of your Claude Code login.** The widget reads the **OAuth access token** that your own Claude Code installation stored after you signed in, and sends it itself (as a bearer token) to `api.anthropic.com` – i.e. it uses your Claude subscription login outside of Claude Code. With several accounts this applies to every ticked account. Anthropic's [terms for Claude Code](https://code.claude.com/docs/en/legal-and-compliance.md) say that subscription (OAuth) logins are meant for Claude Code and Anthropic's own apps. Whether a small, read‑only, local status display like this one is acceptable is **your call** – read the terms yourself. This project makes no claim that it is permitted and accepts no liability for any consequences for your account.
 - **No guarantee of accuracy.** The numbers are whatever the endpoint returns; for authoritative values check [claude.ai/settings/usage](https://claude.ai/settings/usage).
 - The software is provided "as is", without warranty of any kind (see [LICENSE](LICENSE)).
 
